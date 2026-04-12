@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# YOLO training runs (VERY IMPORTANT)
+weapon_dataset/runs/
+
+# Large model files (optional - if too big)
+*.pt
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cache
+*.cache
+
+weapon_dataset/train/images/
+weapon_dataset/valid/images/
+weapon_dataset/test/images/
