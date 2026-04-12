@@ -1,29 +1,40 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.pyc
 *.pyo
+
+# Virtual Environment
 venv/
 env/
 
-# YOLO training runs (VERY IMPORTANT)
+# =========================
+# YOLO / ML (VERY IMPORTANT)
+# =========================
 weapon_dataset/runs/
 
-# Large model files (optional - if too big)
+# Large model files
 *.pt
 
-# VS Code
-.vscode/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Cache
-*.cache
-
+# Dataset images (avoid huge repo)
 weapon_dataset/train/images/
 weapon_dataset/valid/images/
 weapon_dataset/test/images/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs & Cache
+# =========================
+*.log
+*.cache
