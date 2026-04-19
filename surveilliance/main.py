@@ -1,4 +1,4 @@
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 from camera import VideoCamera
 import time
 
@@ -8,6 +8,11 @@ camera = VideoCamera()
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/status')
+def status():
+    return jsonify(camera.get_status())
 
 def gen():
     while True:

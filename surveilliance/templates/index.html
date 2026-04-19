@@ -2,30 +2,114 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>AI Theft Detection System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Theft Detection Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Mini Project | CSE Surveillance Analytics</p>
+                <h1>Smart Theft Detection Dashboard</h1>
+                <p class="subtitle">
+                    Real-time room monitoring with person detection, protected-zone intrusion checks,
+                    weapon and mask verification, suspicious pose analysis, and instant owner alerts.
+                </p>
+            </div>
+            <div class="hero-badge" id="system-mode">MONITOR</div>
+        </header>
 
-    <header>
-        <h1>🔐 AI Theft Detection System</h1>
-        <p class="subtitle">Real-Time Smart Surveillance</p>
-    </header>
+        <main class="dashboard">
+            <section class="feed-card">
+                <div class="section-header">
+                    <h2>Live CCTV Feed</h2>
+                    <span id="schedule-badge">Schedule --:--</span>
+                </div>
+                <div class="camera-frame">
+                    <img src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
+                </div>
+            </section>
 
-    <main>
-        <div class="camera-container">
-            <img src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
-        </div>
+            <aside class="side-panel">
+                <section class="info-card">
+                    <h3>System State</h3>
+                    <div class="info-grid">
+                        <div>
+                            <span class="label">Mode</span>
+                            <strong id="mode-text">MONITOR</strong>
+                        </div>
+                        <div>
+                            <span class="label">Monitoring</span>
+                            <strong id="active-text">Checking...</strong>
+                        </div>
+                        <div>
+                            <span class="label">People</span>
+                            <strong id="people-text">0</strong>
+                        </div>
+                        <div>
+                            <span class="label">Protected Zone</span>
+                            <strong id="zone-text">Enabled</strong>
+                        </div>
+                    </div>
+                </section>
 
-        <div class="status-box">
-            <h2>System Status</h2>
-            <p id="status-text">Monitoring in Progress...</p>
-        </div>
-    </main>
+                <section class="info-card">
+                    <h3>Top Observation</h3>
+                    <p class="highlight" id="activity-text">No Person Detected</p>
+                    <p class="score-line">Score: <span id="score-text">0</span></p>
+                </section>
 
-    <footer>
-        <p>Mini Project - Computer Vision Based Surveillance</p>
-    </footer>
+                <section class="info-card">
+                    <h3>Decision Reasons</h3>
+                    <ul id="reason-list">
+                        <li>Waiting for live detections...</li>
+                    </ul>
+                </section>
 
+                <section class="info-card">
+                    <h3>Project Highlights</h3>
+                    <ul>
+                        <li>Protected-zone based theft monitoring</li>
+                        <li>Schedule-aware intrusion analysis</li>
+                        <li>Explainable theft score and evidence capture</li>
+                        <li>Email alert with snapshot, focus crop, and CCTV clip</li>
+                    </ul>
+                </section>
+            </aside>
+        </main>
+    </div>
+
+    <script>
+        async function refreshStatus() {
+            try {
+                const response = await fetch("{{ url_for('status') }}");
+                const data = await response.json();
+
+                document.getElementById("system-mode").textContent = data.system_mode;
+                document.getElementById("mode-text").textContent = data.system_mode;
+                document.getElementById("active-text").textContent = data.monitoring_active ? "Protected Hours" : "Standby Window";
+                document.getElementById("people-text").textContent = data.people_count;
+                document.getElementById("zone-text").textContent = data.zone_enabled ? "Enabled" : "Disabled";
+                document.getElementById("activity-text").textContent = data.top_activity;
+                document.getElementById("score-text").textContent = data.top_score;
+                document.getElementById("schedule-badge").textContent = "Schedule " + data.active_schedule;
+
+                const reasonList = document.getElementById("reason-list");
+                reasonList.innerHTML = "";
+                const reasons = data.top_reasons && data.top_reasons.length ? data.top_reasons : ["Waiting for live detections..."];
+                reasons.forEach((reason) => {
+                    const li = document.createElement("li");
+                    li.textContent = reason;
+                    reasonList.appendChild(li);
+                });
+            } catch (error) {
+                console.error("Status refresh failed", error);
+            }
+        }
+
+        refreshStatus();
+        setInterval(refreshStatus, 2000);
+    </script>
 </body>
 </html>
