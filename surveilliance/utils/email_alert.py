@@ -1,27 +1,70 @@
 import os
 import smtplib
+from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 
 
+@dataclass
+class EmailAlertConfig:
+    smtp_server: str = ""
+    smtp_port: int = 587
+    sender_email: str = ""
+    sender_password: str = ""
+    receiver_email: str = ""
+
+    @classmethod
+    def from_env(cls):
+        return cls(
+            smtp_server=os.getenv("ALERT_SMTP_SERVER", "").strip(),
+            smtp_port=int(os.getenv("ALERT_SMTP_PORT", "587")),
+            sender_email=os.getenv("ALERT_SENDER_EMAIL", "").strip(),
+            sender_password=os.getenv("ALERT_SENDER_PASSWORD", ""),
+            receiver_email=os.getenv("ALERT_RECEIVER_EMAIL", "").strip(),
+        )
+
+
 class EmailAlertService:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, config=None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.config = config or EmailAlertConfig.from_env()
 
-        self.smtp_server = os.getenv("ALERT_SMTP_SERVER", "")
-        self.smtp_port = int(os.getenv("ALERT_SMTP_PORT", "587"))
-        self.sender_email = os.getenv("ALERT_SENDER_EMAIL", "")
-        self.sender_password = os.getenv("ALERT_SENDER_PASSWORD", "")
-        self.receiver_email = os.getenv("ALERT_RECEIVER_EMAIL", "")
+    def update_config(self, **kwargs):
+        for field_name in (
+            "smtp_server",
+            "smtp_port",
+            "sender_email",
+            "sender_password",
+            "receiver_email",
+        ):
+            if field_name not in kwargs or kwargs[field_name] is None:
+                continue
+
+            value = kwargs[field_name]
+            if field_name == "smtp_port":
+                value = int(value)
+            elif isinstance(value, str):
+                value = value.strip()
+
+            setattr(self.config, field_name, value)
+
+    def get_public_config(self):
+        return {
+            "smtp_server": self.config.smtp_server,
+            "smtp_port": self.config.smtp_port,
+            "sender_email": self.config.sender_email,
+            "receiver_email": self.config.receiver_email,
+            "configured": self.is_configured(),
+        }
 
     def is_configured(self):
         required = [
-            self.smtp_server,
-            self.sender_email,
-            self.sender_password,
-            self.receiver_email,
+            self.config.smtp_server,
+            self.config.sender_email,
+            self.config.sender_password,
+            self.config.receiver_email,
         ]
         return all(required)
 
@@ -42,8 +85,8 @@ class EmailAlertService:
 
         message = EmailMessage()
         message["Subject"] = f"Theft Detection Alert - {threat_level} threat"
-        message["From"] = self.sender_email
-        message["To"] = self.receiver_email
+        message["From"] = self.config.sender_email
+        message["To"] = self.config.receiver_email
 
         detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         reason_lines = reasons or ["Person detected in protected room"]
@@ -72,11 +115,11 @@ class EmailAlertService:
         self._attach_file(message, clip_path, "video/mp4")
 
         try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+            with smtplib.SMTP(self.config.smtp_server, self.config.smtp_port) as server:
                 server.starttls()
-                server.login(self.sender_email, self.sender_password)
+                server.login(self.config.sender_email, self.config.sender_password)
                 server.send_message(message)
-            print(f"📧 Alert email sent to {self.receiver_email}")
+            print(f"📧 Alert email sent to {self.config.receiver_email}")
             return True
         except Exception as exc:
             print(f"❌ Failed to send alert email: {exc}")

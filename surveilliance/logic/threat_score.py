@@ -3,6 +3,7 @@ def calculate_threat(
     in_protected_zone,
     monitoring_active,
     mask_status,
+    mask_confidence,
     weapon_detected,
     hand_raised,
     activity,
@@ -14,17 +15,17 @@ def calculate_threat(
     if not person_detected:
         return 0, []
 
-    score = 10
+    score = 8
     reasons = ["Person detected in monitored room"]
 
     if in_protected_zone:
-        score += 18
+        score += 12
         reasons.append("Person entered protected zone")
     else:
-        score += 4
+        score += 2
 
     if monitoring_active:
-        score += 15
+        score += 8
         reasons.append("Detection happened during active monitoring hours")
     else:
         reasons.append("Outside protected hours, continuing to monitor")
@@ -37,11 +38,11 @@ def calculate_threat(
         score += 10
         reasons.append("Suspicious body pose detected")
 
-    if mask_status == "mask":
-        score += 8
+    if mask_status == "mask" and mask_confidence >= 0.5:
+        score += 5
         reasons.append("Face covered with mask")
-    elif mask_status == "incorrect_mask":
-        score += 12
+    elif mask_status == "incorrect_mask" and mask_confidence >= 0.5:
+        score += 8
         reasons.append("Face partially concealed")
 
     if activity == "Possible Theft In Progress":
@@ -49,12 +50,12 @@ def calculate_threat(
         reasons.append("Combined activity pattern suggests theft")
     elif activity == "Armed Intruder Suspected":
         score += 8
-    elif activity == "Unauthorized Presence In Protected Zone":
-        score += 10
-    elif activity == "Masked Person In Room":
+    elif activity == "Protected Zone Intrusion":
         score += 6
+    elif activity == "Masked Person In Room":
+        score += 4
     elif activity == "Face Concealment Detected":
-        score += 8
+        score += 6
     elif activity == "Suspicious Movement":
         score += 4
 
@@ -62,13 +63,19 @@ def calculate_threat(
         score += 10
         reasons.append("Weapon and pose signals confirm each other")
 
-    if weapon_detected and mask_status in {"mask", "incorrect_mask"}:
+    if weapon_detected and mask_status in {"mask", "incorrect_mask"} and mask_confidence >= 0.5:
         score += 8
         reasons.append("Weapon and face covering raise theft confidence")
 
     if in_protected_zone and monitoring_active:
-        score += 8
+        score += 4
         reasons.append("Intrusion matched protected zone and schedule")
+
+    if hand_raised and not (weapon_detected or in_protected_zone):
+        score -= 6
+
+    if mask_status in {"mask", "incorrect_mask"} and mask_confidence < 0.5:
+        score -= 4
 
     score = max(0, min(100, score))
     return score, reasons[:4]

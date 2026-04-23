@@ -65,6 +65,9 @@ class VideoCamera:
         self.frame_count = 0
         self.fps = self._detect_fps()
         self.detection_interval = max(1, int(os.getenv("DETECTION_INTERVAL_FRAMES", "2")))
+        self.weapon_interval = max(1, int(os.getenv("WEAPON_INTERVAL_FRAMES", "2")))
+        self.pose_interval = max(self.detection_interval, int(os.getenv("POSE_INTERVAL_FRAMES", "2")))
+        self.mask_interval = max(self.detection_interval, int(os.getenv("MASK_INTERVAL_FRAMES", "3")))
         self.alert_threshold = int(os.getenv("THREAT_ALERT_THRESHOLD", "80"))
         self.alert_cooldown = int(os.getenv("THREAT_ALERT_COOLDOWN_SECONDS", "60"))
         self.last_alert_time = 0.0
@@ -75,6 +78,20 @@ class VideoCamera:
         self.monitoring_rules = MonitoringRules()
         self.person_state = {}
         self.confirmation_frames = max(1, int(os.getenv("CONFIRMATION_FRAMES", "2")))
+        self.weapon_confirmation_frames = max(
+            self.confirmation_frames,
+            int(os.getenv("WEAPON_CONFIRMATION_FRAMES", "3")),
+        )
+        self.weapon_signal_threshold = float(
+            os.getenv("WEAPON_SIGNAL_THRESHOLD", "1.0")
+        )
+        self.weapon_signal_decay = float(os.getenv("WEAPON_SIGNAL_DECAY", "0.35"))
+        self.pose_signal_threshold = float(os.getenv("POSE_SIGNAL_THRESHOLD", "1.2"))
+        self.pose_signal_decay = float(os.getenv("POSE_SIGNAL_DECAY", "0.45"))
+        self.mask_signal_threshold = float(os.getenv("MASK_SIGNAL_THRESHOLD", "0.6"))
+        self.mask_signal_decay = float(os.getenv("MASK_SIGNAL_DECAY", "0.35"))
+        self.min_pose_person_height = int(os.getenv("POSE_MIN_PERSON_HEIGHT", "90"))
+        self.min_pose_person_width = int(os.getenv("POSE_MIN_PERSON_WIDTH", "48"))
         self.latest_status = {
             "system_mode": "MONITOR",
             "monitoring_active": self.monitoring_rules.is_monitoring_active(),
@@ -84,6 +101,7 @@ class VideoCamera:
             "top_activity": "No Person Detected",
             "top_score": 0,
             "top_reasons": [],
+            "pipeline_mode": "BALANCED",
         }
 
         print("✅ System Ready")
@@ -117,13 +135,21 @@ class VideoCamera:
     def _crop_face_region(self, frame, box):
         x1, y1, x2, y2 = box
         box_h = y2 - y1
-        face_y2 = y1 + int(box_h * 0.55)
-        return self._crop_with_padding(frame, (x1, y1, x2, face_y2), pad_x=0.12, pad_y=0.12)
+        face_y2 = y1 + int(box_h * 0.68)
+        return self._crop_with_padding(frame, (x1, y1, x2, face_y2), pad_x=0.16, pad_y=0.18)
+
+    def _crop_pose_region(self, frame, box):
+        return self._crop_with_padding(frame, box, pad_x=0.22, pad_y=0.18)
 
     def _update_streak(self, previous_value, detected):
         if detected:
             return previous_value + 1
         return max(0, previous_value - 1)
+
+    def _update_signal(self, previous_value, evidence_score, decay, boost=1.0, maximum=3.0):
+        if evidence_score > 0:
+            return min(maximum, max(0.0, previous_value * 0.55) + (evidence_score * boost))
+        return max(0.0, previous_value - decay)
 
     def _format_mask_status(self, mask_status):
         labels = {
@@ -133,6 +159,15 @@ class VideoCamera:
             "unknown": "Mask Unknown",
         }
         return labels.get(mask_status, "Mask Unknown")
+
+    def _mask_signal_boost(self, mask_status, confidence):
+        if mask_status == "no_mask":
+            return confidence
+        if mask_status == "incorrect_mask":
+            return confidence * 1.1
+        if mask_status == "mask":
+            return confidence
+        return 0.0
 
     def _draw_person_panel(self, display, box, person_id, activity, level, score, color, status_lines):
         x1, y1, x2, y2 = box
@@ -274,7 +309,17 @@ class VideoCamera:
         )
 
     def get_status(self):
-        return self.latest_status
+        return {
+            **self.latest_status,
+            "email_configured": self.alert_service.is_configured(),
+        }
+
+    def get_email_config(self):
+        return self.alert_service.get_public_config()
+
+    def update_email_config(self, **kwargs):
+        self.alert_service.update_config(**kwargs)
+        return self.alert_service.get_public_config()
 
     def get_frame(self):
         success, frame = self.video.read()
@@ -289,7 +334,9 @@ class VideoCamera:
 
         # 🔥 Frame skipping (performance)
         self.frame_count += 1
-        run_detection = (self.frame_count % self.detection_interval == 0)
+        run_weapon_detection = (self.frame_count % self.weapon_interval == 0)
+        run_pose_detection = (self.frame_count % self.pose_interval == 0)
+        run_mask_detection = (self.frame_count % self.mask_interval == 0)
 
         # =========================
         # 🔵 PERSON TRACKING
@@ -316,10 +363,6 @@ class VideoCamera:
 
                 tracked_persons.append((person_id, x1, y1, x2, y2))
 
-        pose_results = None
-        if run_detection and tracked_persons:
-            pose_results = self.pose_model(frame, device=self.device, verbose=False)
-
         top_score = 0
         top_level = "MONITOR"
         top_activity = "No Person Detected"
@@ -333,8 +376,11 @@ class VideoCamera:
         # =========================
         for person_id, x1, y1, x2, y2 in tracked_persons:
             person_box = (x1, y1, x2, y2)
-            in_protected_zone = self.monitoring_rules.is_in_protected_zone(person_box, frame.shape)
+            current_in_protected_zone = self.monitoring_rules.is_in_protected_zone(
+                person_box, frame.shape
+            )
             person_crop = self._crop_with_padding(frame, person_box, pad_x=0.08, pad_y=0.08)
+            pose_crop = self._crop_pose_region(frame, person_box)
             face_crop = self._crop_face_region(frame, person_box)
             if person_crop.size == 0:
                 continue
@@ -344,64 +390,145 @@ class VideoCamera:
                 {
                     "weapon_detected": False,
                     "mask_status": "unknown",
+                    "mask_confidence": 0.0,
+                    "mask_signal": 0.0,
                     "hand_raised": False,
                     "weapon_streak": 0,
+                    "weapon_confidence": 0.0,
+                    "weapon_signal": 0.0,
                     "pose_streak": 0,
+                    "pose_signal": 0.0,
                     "in_protected_zone": False,
                 },
             )
             weapon_detected = state["weapon_detected"]
             mask_status = state["mask_status"]
+            mask_confidence = state.get("mask_confidence", 0.0)
+            mask_signal = state.get("mask_signal", 0.0)
             hand_raised = state["hand_raised"]
             weapon_streak = state.get("weapon_streak", 0)
+            weapon_confidence = state.get("weapon_confidence", 0.0)
+            weapon_signal = state.get("weapon_signal", 0.0)
             pose_streak = state.get("pose_streak", 0)
-            in_protected_zone = state.get("in_protected_zone", in_protected_zone)
+            pose_signal = state.get("pose_signal", 0.0)
+            in_protected_zone = current_in_protected_zone
 
-            if run_detection:
+            should_run_weapon = run_weapon_detection or weapon_signal > 0.2 or in_protected_zone
+            should_run_mask = run_mask_detection or mask_signal > 0.2 or in_protected_zone
+            person_height = y2 - y1
+            person_width = x2 - x1
+            should_run_pose = (
+                run_pose_detection
+                and person_height >= self.min_pose_person_height
+                and person_width >= self.min_pose_person_width
+                and pose_crop.size != 0
+            )
+
+            if should_run_weapon or should_run_mask or should_run_pose:
                 raw_hand_raised = False
-                if pose_results is not None:
-                    raw_hand_raised = self.pose_detector.detect(pose_results, person_box=person_box)
-
-                raw_weapon_detected = False
-
-                if person_crop.shape[0] >= 80 and person_crop.shape[1] >= 50:
-                    weapon_results = self.weapon_model(
-                        person_crop,
-                        conf=0.35,
+                pose_analysis = {"detected": False, "score": 0.0, "side": None}
+                if should_run_pose:
+                    pose_results = self.pose_model(
+                        pose_crop,
                         device=self.device,
                         verbose=False,
                     )
-                    raw_weapon_detected = self.weapon_detector.detect(
-                        weapon_results, self.weapon_model
+                    pose_analysis = self.pose_detector.analyze(
+                        pose_results
                     )
+                    raw_hand_raised = pose_analysis["detected"]
 
-                    if face_crop.size != 0 and face_crop.shape[0] >= 40 and face_crop.shape[1] >= 40:
-                        mask_results = self.mask_model(
-                            face_crop,
-                            conf=0.35,
-                            device=self.device,
-                            verbose=False,
-                        )
-                        mask_status = self.mask_detector.detect(
-                            mask_results, self.mask_model
-                        )
-                    else:
-                        mask_status = "unknown"
-                else:
+                raw_weapon_detected = False
+                instant_weapon_lock = False
+
+                if should_run_weapon and person_crop.shape[0] >= 80 and person_crop.shape[1] >= 50:
+                    weapon_results = self.weapon_model(
+                        person_crop,
+                        conf=self.weapon_detector.min_confidence,
+                        device=self.device,
+                        verbose=False,
+                    )
+                    weapon_analysis = self.weapon_detector.analyze(
+                        weapon_results, self.weapon_model, person_crop.shape
+                    )
+                    raw_weapon_detected = weapon_analysis["detected"]
+                    weapon_confidence = weapon_analysis["confidence"]
+                    instant_weapon_lock = weapon_analysis["instant_lock"]
+                elif should_run_weapon:
                     raw_weapon_detected = False
+                    weapon_confidence = 0.0
+
+                if should_run_mask and face_crop.size != 0 and face_crop.shape[0] >= 40 and face_crop.shape[1] >= 40:
+                    mask_results = self.mask_model(
+                        face_crop,
+                        conf=self.mask_detector.min_confidence,
+                        device=self.device,
+                        verbose=False,
+                    )
+                    mask_analysis = self.mask_detector.analyze(
+                        mask_results, self.mask_model
+                    )
+                    mask_signal = self._update_signal(
+                        mask_signal,
+                        self._mask_signal_boost(
+                            mask_analysis["status"],
+                            mask_analysis["confidence"],
+                        ),
+                        self.mask_signal_decay,
+                        boost=1.0,
+                        maximum=2.5,
+                    )
+                    if mask_signal >= self.mask_signal_threshold:
+                        mask_status = mask_analysis["status"]
+                        mask_confidence = mask_analysis["confidence"]
+                    else:
+                        mask_status = (
+                            mask_analysis["status"]
+                            if mask_analysis["confidence"] >= self.mask_detector.min_confidence
+                            else "unknown"
+                        )
+                        mask_confidence = (
+                            mask_analysis["confidence"] if mask_status != "unknown" else 0.0
+                        )
+                elif should_run_mask:
                     mask_status = "unknown"
+                    mask_confidence = 0.0
+                    mask_signal = max(0.0, mask_signal - self.mask_signal_decay)
 
                 weapon_streak = self._update_streak(weapon_streak, raw_weapon_detected)
                 pose_streak = self._update_streak(pose_streak, raw_hand_raised)
-                weapon_detected = weapon_streak >= self.confirmation_frames
-                hand_raised = pose_streak >= self.confirmation_frames
+                weapon_signal = self._update_signal(
+                    weapon_signal,
+                    weapon_confidence if raw_weapon_detected else 0.0,
+                    self.weapon_signal_decay,
+                    boost=1.2,
+                )
+                pose_signal = self._update_signal(
+                    pose_signal,
+                    pose_analysis["score"] if raw_hand_raised else 0.0,
+                    self.pose_signal_decay,
+                    boost=0.9,
+                )
+                weapon_detected = instant_weapon_lock or (
+                    weapon_signal >= self.weapon_signal_threshold
+                    or weapon_streak >= self.weapon_confirmation_frames
+                )
+                hand_raised = (
+                    pose_signal >= self.pose_signal_threshold
+                    and pose_streak >= self.confirmation_frames
+                )
 
                 self.person_state[person_id] = {
                     "weapon_detected": weapon_detected,
                     "mask_status": mask_status,
+                    "mask_confidence": mask_confidence,
+                    "mask_signal": mask_signal,
                     "hand_raised": hand_raised,
                     "weapon_streak": weapon_streak,
+                    "weapon_confidence": weapon_confidence,
+                    "weapon_signal": weapon_signal,
                     "pose_streak": pose_streak,
+                    "pose_signal": pose_signal,
                     "in_protected_zone": in_protected_zone,
                 }
 
@@ -415,6 +542,7 @@ class VideoCamera:
                 weapon_detected,
                 hand_raised,
                 mask_status,
+                mask_confidence,
             )
 
             # =========================
@@ -425,6 +553,7 @@ class VideoCamera:
                 in_protected_zone,
                 monitoring_active,
                 mask_status,
+                mask_confidence,
                 weapon_detected,
                 hand_raised,
                 activity,
@@ -440,9 +569,11 @@ class VideoCamera:
             status_lines = [
                 "Room status: person detected",
                 f"Zone: {'inside protected area' if in_protected_zone else 'outside protected area'}",
-                f"Weapon: {'detected' if weapon_detected else 'clear'}",
-                f"Pose: {'suspicious movement' if hand_raised else 'normal'}",
-                self._format_mask_status(mask_status),
+                f"Weapon: {'detected' if weapon_detected else 'verifying' if weapon_signal > 0.2 else 'clear'}"
+                + (f" ({weapon_confidence:.2f})" if weapon_confidence > 0 else ""),
+                f"Pose: {'suspicious movement' if hand_raised else 'verifying' if pose_signal > 0.2 else 'normal'}",
+                self._format_mask_status(mask_status)
+                + (f" ({mask_confidence:.2f})" if mask_confidence > 0 else ""),
             ]
             self._draw_person_panel(
                 display,
@@ -488,6 +619,7 @@ class VideoCamera:
             "top_activity": top_activity,
             "top_score": top_score,
             "top_reasons": top_reasons,
+            "pipeline_mode": "BALANCED",
         }
 
         # =========================

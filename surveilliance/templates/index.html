@@ -51,6 +51,10 @@
                             <span class="label">Protected Zone</span>
                             <strong id="zone-text">Enabled</strong>
                         </div>
+                        <div>
+                            <span class="label">Email Alerts</span>
+                            <strong id="email-text">Checking...</strong>
+                        </div>
                     </div>
                 </section>
 
@@ -91,6 +95,7 @@
                 document.getElementById("active-text").textContent = data.monitoring_active ? "Protected Hours" : "Standby Window";
                 document.getElementById("people-text").textContent = data.people_count;
                 document.getElementById("zone-text").textContent = data.zone_enabled ? "Enabled" : "Disabled";
+                document.getElementById("email-text").textContent = data.email_configured ? "Configured" : "Not Configured";
                 document.getElementById("activity-text").textContent = data.top_activity;
                 document.getElementById("score-text").textContent = data.top_score;
                 document.getElementById("schedule-badge").textContent = "Schedule " + data.active_schedule;

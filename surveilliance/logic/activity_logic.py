@@ -5,6 +5,7 @@ def get_activity(
     weapon_detected,
     hand_raised,
     mask_status="unknown",
+    mask_confidence=0.0,
 ):
     """
     Returns a theft-focused summary of the observed activity.
@@ -19,17 +20,17 @@ def get_activity(
     if weapon_detected:
         return "Armed Intruder Suspected"
 
-    if mask_status == "incorrect_mask":
+    if mask_status == "incorrect_mask" and mask_confidence >= 0.5:
         return "Face Concealment Detected"
 
-    if mask_status == "mask":
+    if mask_status == "mask" and mask_confidence >= 0.5:
         return "Masked Person In Room"
 
     if hand_raised:
         return "Suspicious Movement"
 
     if in_protected_zone and monitoring_active:
-        return "Unauthorized Presence In Protected Zone"
+        return "Protected Zone Intrusion"
 
     if in_protected_zone:
         return "Person Inside Protected Zone"
